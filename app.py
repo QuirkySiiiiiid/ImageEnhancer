@@ -69,8 +69,7 @@ def create_ui():
                 input_image = gr.Image(
                     label="Upload Image",
                     type="numpy",
-                    interactive=True,
-                    sources=["upload", "clipboard"]
+                    interactive=True
                 )
                 output_format = gr.Radio(
                     choices=["PNG", "JPEG"],
@@ -88,19 +87,6 @@ def create_ui():
                 download_btn = gr.File(
                     label="Download Enhanced Image"
                 )
-        
-        # Add example images
-        gr.Examples(
-            examples=[
-                "example_images/landscape.jpg",
-                "example_images/portrait.jpg",
-                "example_images/night.jpg"
-            ],
-            inputs=input_image,
-            outputs=[output_image, download_btn],
-            fn=lambda x: process_image(x, "PNG"),
-            cache_examples=True
-        )
         
         # Handle enhancement button click
         enhance_btn.click(
