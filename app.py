@@ -69,7 +69,8 @@ def create_ui():
                 input_image = gr.Image(
                     label="Upload Image",
                     type="numpy",
-                    tool="upload"
+                    sources=["upload", "clipboard"],
+                    interactive=True
                 )
                 output_format = gr.Radio(
                     choices=["PNG", "JPEG"],
