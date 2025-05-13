@@ -107,8 +107,6 @@ def create_ui():
 if __name__ == "__main__":
     app = create_ui()
     app.launch(
-        server_name="127.0.0.1",  # Local access only
-        server_port=7861,  # Custom port
-        show_error=True,  # Show detailed errors
-        share=False  # Local access only
+        inbrowser=True,  # Automatically open in browser
+        server_port=None  # Let Gradio find an available port
     ) 
