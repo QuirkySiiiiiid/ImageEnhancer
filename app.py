@@ -108,6 +108,6 @@ if __name__ == "__main__":
     app = create_ui()
     app.launch(
         server_name="0.0.0.0",  # Allows external access
-        server_port=7860,  # Default Gradio port
-        share=True  # Creates a public URL
+        server_port=7861  # Default Gradio port
+        # share=True  # Creates a public URL
     ) 
