@@ -106,7 +106,14 @@ def create_ui():
 # For local testing
 if __name__ == "__main__":
     app = create_ui()
-    app.launch(
-        inbrowser=True,  # Automatically open in browser
-        server_port=None  # Let Gradio find an available port
-    ) 
+    try:
+        app.launch(share=True)  # Let Gradio handle everything automatically
+    except Exception as e:
+        print(f"Error launching app: {e}")
+        # Try alternate ports if the first attempt fails
+        for port in range(7000, 8000):
+            try:
+                app.launch(server_port=port, share=True)
+                break
+            except:
+                continue 
