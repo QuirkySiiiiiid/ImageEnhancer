@@ -2,4 +2,5 @@ opencv-python
 numpy
 pillow
 torch
-torchvision 
+torchvision
+gradio>=3.50.2 

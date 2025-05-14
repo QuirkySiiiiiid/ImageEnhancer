@@ -23,11 +23,12 @@ class ResidualBlock(nn.Module):
         return F.relu(out)
 
 class SuperResolutionNet(nn.Module):
-    def __init__(self, num_channels=3, num_residuals=8):
+    def __init__(self, num_channels=3, num_residuals=16):
         super(SuperResolutionNet, self).__init__()
         
-        # Initial convolution
+        # Initial feature extraction
         self.conv_input = nn.Conv2d(num_channels, 64, kernel_size=9, padding=4)
+        self.prelu1 = nn.PReLU()
         
         # Residual blocks
         res_blocks = []
@@ -35,20 +36,47 @@ class SuperResolutionNet(nn.Module):
             res_blocks.append(ResidualBlock(64))
         self.res_blocks = nn.Sequential(*res_blocks)
         
-        # Upscaling (2x)
-        self.conv_up1 = nn.Conv2d(64, 256, kernel_size=3, padding=1)
-        self.pixel_shuffle1 = nn.PixelShuffle(2)
+        # Post residual convolution
+        self.conv_mid = nn.Conv2d(64, 64, kernel_size=3, padding=1)
+        self.bn_mid = nn.BatchNorm2d(64)
         
-        # Final convolution
-        self.conv_output = nn.Conv2d(64, num_channels, kernel_size=9, padding=4)
+        # Upscaling layers
+        self.upscale = nn.Sequential(
+            nn.Conv2d(64, 256, kernel_size=3, padding=1),
+            nn.PixelShuffle(2),
+            nn.PReLU(),
+            nn.Conv2d(64, 256, kernel_size=3, padding=1),
+            nn.PixelShuffle(2),
+            nn.PReLU()
+        )
+        
+        # Final convolutions
+        self.conv_output = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.PReLU(),
+            nn.Conv2d(64, num_channels, kernel_size=9, padding=4)
+        )
 
     def forward(self, x):
-        x = F.relu(self.conv_input(x))
+        # Initial feature extraction
+        x = self.prelu1(self.conv_input(x))
+        
+        # Store residual
         residual = x
+        
+        # Residual blocks
         x = self.res_blocks(x)
-        x += residual
-        x = F.relu(self.pixel_shuffle1(self.conv_up1(x)))
+        x = self.bn_mid(self.conv_mid(x))
+        
+        # Skip connection
+        x = x + residual
+        
+        # Upscaling
+        x = self.upscale(x)
+        
+        # Final convolutions
         x = self.conv_output(x)
+        
         return torch.tanh(x)
 
 class AdvancedImageEnhancer:
@@ -57,52 +85,82 @@ class AdvancedImageEnhancer:
         self.model = SuperResolutionNet().to(self.device)
         self.transform = transforms.Compose([
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNet normalization
         ])
 
     def enhance_image_quality(self, image):
         """Enhance image quality using advanced techniques"""
-        # Convert to RGB if needed
-        if len(image.shape) == 2:  # Grayscale
-            image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-        elif image.shape[2] == 4:  # RGBA
-            image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
-        elif image.shape[2] == 3 and image.dtype == np.uint8:
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        try:
+            # Convert to RGB if needed
+            if len(image.shape) == 2:  # Grayscale
+                image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            elif image.shape[2] == 4:  # RGBA
+                image = cv2.cvtColor(image, cv2.COLOR_RGBA2RGB)
+            elif image.shape[2] == 3 and image.dtype == np.uint8:
+                image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Resize if image is too small
-        min_size = 256
-        h, w = image.shape[:2]
-        if h < min_size or w < min_size:
-            scale = min_size / min(h, w)
-            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_LANCZOS4)
+            # Store original size for later
+            original_h, original_w = image.shape[:2]
 
-        # Convert to PIL Image for processing
-        image_pil = Image.fromarray(image)
-        
-        # Transform for model
-        input_tensor = self.transform(image_pil).unsqueeze(0).to(self.device)
-        
-        with torch.no_grad():
-            # Apply super-resolution
-            output = self.model(input_tensor)
-            
-            # Post-process the output
-            output = output.squeeze().cpu().numpy()
-            output = np.transpose(output, (1, 2, 0))
-            output = ((output + 1) * 127.5).clip(0, 255).astype(np.uint8)
-            
-            # Apply additional enhancements
-            output = cv2.detailEnhance(output, sigma_s=10, sigma_r=0.15)
-            
-            # Adjust contrast and brightness
-            lab = cv2.cvtColor(output, cv2.COLOR_RGB2LAB)
-            l, a, b = cv2.split(lab)
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-            l = clahe.apply(l)
-            output = cv2.cvtColor(cv2.merge((l,a,b)), cv2.COLOR_LAB2RGB)
+            # Ensure dimensions are multiples of 4
+            h, w = ((original_h + 3) // 4) * 4, ((original_w + 3) // 4) * 4
+            if h != original_h or w != original_w:
+                image = cv2.resize(image, (w, h), interpolation=cv2.INTER_LANCZOS4)
 
-        return output
+            # Convert to PIL Image for processing
+            image_pil = Image.fromarray(image)
+            
+            # Transform for model
+            input_tensor = self.transform(image_pil).unsqueeze(0).to(self.device)
+            
+            with torch.no_grad():
+                # Apply super-resolution
+                output = self.model(input_tensor)
+                
+                # Post-process the output
+                output = output.squeeze().cpu().numpy()
+                output = np.transpose(output, (1, 2, 0))
+                
+                # Denormalize using ImageNet stats
+                output = output * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+                output = (output * 255).clip(0, 255).astype(np.uint8)
+                
+                # Color correction to match original
+                output_lab = cv2.cvtColor(output, cv2.COLOR_RGB2LAB)
+                original_lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
+                
+                # Match color statistics
+                for i in range(3):  # For each LAB channel
+                    output_mean = np.mean(output_lab[:,:,i])
+                    output_std = np.std(output_lab[:,:,i])
+                    target_mean = np.mean(original_lab[:,:,i])
+                    target_std = np.std(original_lab[:,:,i])
+                    
+                    output_lab[:,:,i] = ((output_lab[:,:,i] - output_mean) * (target_std / output_std)) + target_mean
+                
+                output = cv2.cvtColor(output_lab, cv2.COLOR_LAB2RGB)
+                
+                # Enhance details without introducing artifacts
+                detail_kernel = np.array([[-1,-1,-1],
+                                        [-1, 9,-1],
+                                        [-1,-1,-1]]) / 9
+                output = cv2.filter2D(output, -1, detail_kernel)
+                
+                # Apply subtle contrast enhancement
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                lab = cv2.cvtColor(output, cv2.COLOR_RGB2LAB)
+                l, a, b = cv2.split(lab)
+                l = clahe.apply(l)
+                output = cv2.cvtColor(cv2.merge((l,a,b)), cv2.COLOR_LAB2RGB)
+                
+                # Final touch: subtle bilateral filtering to preserve edges
+                output = cv2.bilateralFilter(output, 5, 50, 50)
+
+            return output
+
+        except Exception as e:
+            print(f"Error in enhance_image_quality: {str(e)}")
+            return None
 
     def process_image(self, input_image):
         """Main processing pipeline"""
@@ -124,6 +182,18 @@ class AdvancedImageEnhancer:
 
             # Apply enhancement
             enhanced = self.enhance_image_quality(input_image)
+            if enhanced is None:
+                return None
+                
+            # Ensure we maintain original colors
+            enhanced_yuv = cv2.cvtColor(enhanced, cv2.COLOR_RGB2YUV)
+            original_yuv = cv2.cvtColor(cv2.resize(input_image, (enhanced.shape[1], enhanced.shape[0]), 
+                                                 interpolation=cv2.INTER_LANCZOS4), cv2.COLOR_RGB2YUV)
+            
+            # Keep enhanced luminance but original colors
+            enhanced_yuv[:,:,1:] = original_yuv[:,:,1:]
+            enhanced = cv2.cvtColor(enhanced_yuv, cv2.COLOR_YUV2RGB)
+            
             return enhanced
 
         except Exception as e:
